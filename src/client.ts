@@ -1,32 +1,37 @@
-import { Connection, Client } from '@temporalio/client';
-import { example } from './workflows';
-import { nanoid } from 'nanoid';
+import { Client } from '@temporalio/client';
+import { DSLInterpreter, DSL } from './workflows';
+import yaml from 'js-yaml';
+import fs from 'fs';
+
+// default DSL structure if no arguments are passed
+// validate with http://nodeca.github.io/js-yaml/
+let dslInput: DSL = {
+  variables: { arg1: 'value1', arg2: 'value2' },
+  root: {
+    sequence: {
+      elements: [
+        { activity: { name: 'activity1', arguments: ['arg1'], result: 'result1' } },
+        { activity: { name: 'activity2', arguments: ['result1'], result: 'result2' } },
+        { activity: { name: 'activity3', arguments: ['arg2', 'result2'], result: 'result3' } },
+      ],
+    },
+  },
+};
 
 async function run() {
-  // Connect to the default Server location
-  const connection = await Connection.connect({ address: 'localhost:7233' });
-  // In production, pass options to configure TLS and other settings:
-  // {
-  //   address: 'foo.bar.tmprl.cloud',
-  //   tls: {}
-  // }
+  const path = process.argv[2];
+  if (path) {
+    dslInput = yaml.load((await fs.promises.readFile(path)).toString()) as DSL;
+  }
+  const client = new Client(); // remember to configure Connection for production
 
-  const client = new Client({
-    connection,
-    // namespace: 'foo.bar', // connects to 'default' namespace if not specified
+  // Invoke the `DSLInterpreter` Workflow, only resolved when the workflow completes
+  const result = await client.workflow.execute(DSLInterpreter, {
+    args: [dslInput],
+    taskQueue: 'dsl-interpreter',
+    workflowId: 'my-dsl-id',
   });
-
-  const handle = await client.workflow.start(example, {
-    taskQueue: 'hello-world',
-    // type inference works! args: [name: string]
-    args: ['Temporal'],
-    // in practice, use a meaningful business ID, like customerId or transactionId
-    workflowId: 'workflow-' + nanoid(),
-  });
-  console.log(`Started workflow ${handle.workflowId}`);
-
-  // optional: wait for client result
-  console.log(await handle.result()); // Hello, Temporal!
+  console.log(result); // Hello, Temporal!
 }
 
 run().catch((err) => {
